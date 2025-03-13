@@ -1,0 +1,5 @@
+.venv/
+data/
+index_storage/
+tei_data/
+tgi_data/
