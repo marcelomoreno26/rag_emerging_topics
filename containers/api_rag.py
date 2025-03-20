@@ -32,7 +32,7 @@ print(f"Using embedding model: {tei_model_name}")
 Settings.llm = None  # No language model is set directly in settings
 Settings.embed_model = TextEmbeddingsInference(
     model_name=tei_model_name,
-    base_url="http://tei:8080",  # Endpoint for the embedding service
+    base_url="http://tei:80",  # Endpoint for the embedding service
     embed_batch_size=32  # Defines batch size for embedding requests
 )
 
@@ -42,7 +42,7 @@ Settings.embed_model = TextEmbeddingsInference(
 print("Configuring TGI client for text generation...")
 
 # Initialize the text generation client
-generator = InferenceClient("http://tgi:8081")
+generator = InferenceClient("http://tgi:80")
 
 tgi_model_name = os.getenv("TGI_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
 print(f"Using generative model (TGI): {tgi_model_name}")
@@ -178,3 +178,4 @@ def read_root():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
