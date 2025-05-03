@@ -70,7 +70,7 @@ class RAG:
             splitter = SemanticSplitterNodeParser(
                 buffer_size=1,
                 embed_model=Settings.embed_model,
-                breakpoint_percentile_threshold=95
+                breakpoint_percentile_threshold=80
             )
 
             nodes = splitter.build_semantic_nodes_from_documents(documents)
@@ -161,7 +161,15 @@ class RAG:
 
 
     def _get_query_rewriting(self, queries: list[str]) -> list[str]:
-        system_message = "Eres un experto en procesamiento de lenguaje natural y reestructuración de consultas. Tu tarea es analizar y mejorar las consultas, haciendo que sean más claras, precisas y relevantes sin alterar su significado original."
+        system_message = """
+                        Eres un experto en procesamiento de lenguaje natural. Tu tarea es mejorar consultas de usuario para que sean más claras, precisas y relevantes, sin cambiar su significado original. Aplica las siguientes estrategias al reformular:
+                        1. Expande abreviaturas y siglas (por ejemplo, "NLP" → "procesamiento de lenguaje natural").
+                        2. Corrige errores ortográficos y gramaticales.
+                        3. Enriquece semánticamente usando sinónimos o términos relacionados para mejorar la recuperación.
+                        4. Aclara entidades si son ambiguas (por ejemplo, "Apple" → "Apple, la empresa tecnológica").
+                        5. Haz la consulta más útil añadiendo intención explícita de obtener ejemplos, pasos, instrucciones o detalles específicos, si esto puede mejorar la recuperación sin cambiar el objetivo original.
+                        Si la consulta ya es clara y no se puede mejorar, devuélvela sin cambios.
+                        """
         prompt = "Reformula la siguiente consulta para que sea más clara, precisa y relevante, manteniendo su significado. Si consideras que no se puede mejorar, devuelve la consulta original: {}"
 
 
@@ -260,7 +268,7 @@ class RAG:
     def generate_answers(self, queries: list[str], documents: list[str], sampling_params: dict=None) -> list[str]:
         system_message = """
         Eres un asistente, tu objetivo es proporcionar respuestas exhaustivas y detalladas, utilizando toda la información disponible en el contexto. Debes asegurarte de abordar completamente cada pregunta, desglosando todos los aspectos relevantes y considerando todas las posibles opciones y variaciones mencionadas en el contexto.
-        Es esencial que no limites tus respuestas a generalizaciones breves; en lugar de eso, desglosa las posibles respuestas soluciones, pasos o detalles importantes que el contexto proporcione. Si la pregunta se refiere a un proceso o procedimiento, asegúrate de explicar cada etapa y los posibles matices involucrados. Si hay diferentes alternativas o elementos a considerar, proporciona detalles sobre cada uno de ellos.
+        Es esencial que no limites tus respuestas a generalizaciones breves; en lugar de eso, desglosa las posibles respuestas, soluciones, pasos o detalles importantes que el contexto proporcione. Si la pregunta se refiere a un proceso o procedimiento, asegúrate de explicar cada etapa y los posibles matices involucrados. Si hay diferentes alternativas o elementos a considerar, proporciona detalles sobre cada uno de ellos.
         Si no cuentas con suficiente información para ofrecer una respuesta completa, o si la pregunta no se relaciona con el contexto, responde: 'No tengo suficiente información para responder a eso.'
         Recuerda que tu propósito es ser lo más detallado y completo posible, sin omitir ninguna información relevante, con el fin de que el usuario reciba una respuesta clara, precisa y útil.
         """
