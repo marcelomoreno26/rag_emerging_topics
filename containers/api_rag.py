@@ -25,7 +25,7 @@ app = FastAPI()
 # ==========================
 # CONFIGURATION: TEXT EMBEDDINGS INFERENCE (TEI)
 # ==========================
-tei_model_name = os.getenv("TEI_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+tei_model_name = os.getenv("TEI_MODEL", "BAAI/bge-m3")
 print(f"Using embedding model: {tei_model_name}")
 
 # Configure embedding settings
