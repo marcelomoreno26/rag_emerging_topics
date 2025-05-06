@@ -140,6 +140,19 @@ class RAG:
     
 
     def _get_hyde(self, queries: list[str]) -> list[str]:
+        """
+        Generate synthetic answers for queries to be used for retrieval (HyDE method).
+
+        Parameters
+        ----------
+        queries : list of str
+            The original user queries.
+
+        Returns
+        -------
+        list of str
+            List of generated answers corresponding to each query.
+        """
         system_message = "Eres un experto en la redacción de respuestas detalladas sobre diversos temas, capaz de abordar cualquier consulta con precisión y profundidad."
         prompt = "Contesta la siguiente pregunta de forma detallada, proporcionando toda la información relevante. Devuelve únicamente la respuesta a la pregunta: {}"
 
@@ -161,13 +174,26 @@ class RAG:
 
 
     def _get_query_rewriting(self, queries: list[str]) -> list[str]:
+        """
+        Rewrite queries to be more precise, complete, and clear.
+
+        Parameters
+        ----------
+        queries : list of str
+            Original user queries.
+
+        Returns
+        -------
+        list of str
+            Rewritten queries.
+        """
         system_message = """
                         Eres un experto en procesamiento de lenguaje natural. Tu tarea es mejorar consultas de usuario para que sean más claras, precisas y relevantes, sin cambiar su significado original. Aplica las siguientes estrategias al reformular:
                         1. Expande abreviaturas y siglas (por ejemplo, "NLP" → "procesamiento de lenguaje natural").
                         2. Corrige errores ortográficos y gramaticales.
                         3. Enriquece semánticamente usando sinónimos o términos relacionados para mejorar la recuperación.
                         4. Aclara entidades si son ambiguas (por ejemplo, "Apple" → "Apple, la empresa tecnológica").
-                        5. Haz la consulta más útil añadiendo intención explícita de obtener ejemplos, pasos, instrucciones o detalles específicos, si esto puede mejorar la recuperación sin cambiar el objetivo original.
+                        5. Haz la consulta más útil añadiendo ejemplos, pasos, instrucciones o detalles específicos, si esto puede mejorar la recuperación sin cambiar el objetivo original.
                         Si la consulta ya es clara y no se puede mejorar, devuélvela sin cambios.
                         """
         prompt = "Reformula la siguiente consulta para que sea más clara, precisa y relevante, manteniendo su significado. Si consideras que no se puede mejorar, devuelve la consulta original: {}"
@@ -191,6 +217,22 @@ class RAG:
 
     
     def _rerank(self, queries: list[str], list_nodes: list[list]):
+        """
+        Rerank retrieved nodes using a reranker model.
+
+        Parameters
+        ----------
+        queries : list of str
+            List of queries.
+
+        list_nodes : list of list
+            Retrieved nodes for each query.
+
+        Returns
+        -------
+        list of list
+            Reranked list of nodes per query.
+        """
         reranked_list_nodes = []
         for query, nodes in zip(queries, list_nodes):
             query_bundle = QueryBundle(query)
@@ -202,6 +244,21 @@ class RAG:
     
 
     def set_config(self, retrieval_technique: str, rerank: bool, top_k: int):
+        """
+        Set the retrieval configuration for document querying.
+
+        Parameters
+        ----------
+        retrieval_technique : str
+            The method to use for query transformation. Options: "none", "HyDE", "query_rewriting".
+
+        rerank : bool
+            Whether to apply reranking to the retrieved documents.
+
+        top_k : int
+            The number of top documents to return. If reranking is enabled, this determines
+            the number of reranked results (with a higher initial k=15 for retrieval).
+        """
         self.retrieval_technique = retrieval_technique
         self.rerank = rerank
         if self.rerank:
@@ -266,6 +323,25 @@ class RAG:
 
 
     def generate_answers(self, queries: list[str], documents: list[str], sampling_params: dict=None) -> list[str]:
+        """
+        Generate detailed and comprehensive answers based on the given queries and their retrieved documents.
+
+        Parameters
+        ----------
+        queries : list of str
+            List of user queries to be answered.
+
+        documents : list of str
+            List of corresponding document contexts for each query, used to generate grounded responses.
+
+        sampling_params : dict, optional
+            Sampling parameters for generation (e.g., temperature, top_p). If not provided, defaults are used.
+
+        Returns
+        -------
+        list of str
+            A list of generated answers, each grounded in the corresponding document context.
+        """
         system_message = """
         Eres un asistente, tu objetivo es proporcionar respuestas exhaustivas y detalladas, utilizando toda la información disponible en el contexto. Debes asegurarte de abordar completamente cada pregunta, desglosando todos los aspectos relevantes y considerando todas las posibles opciones y variaciones mencionadas en el contexto.
         Es esencial que no limites tus respuestas a generalizaciones breves; en lugar de eso, desglosa las posibles respuestas, soluciones, pasos o detalles importantes que el contexto proporcione. Si la pregunta se refiere a un proceso o procedimiento, asegúrate de explicar cada etapa y los posibles matices involucrados. Si hay diferentes alternativas o elementos a considerar, proporciona detalles sobre cada uno de ellos.

@@ -1,170 +1,136 @@
 import os
+import shutil
 from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
-
 from llama_index.core import (
     Settings,
     VectorStoreIndex,
     StorageContext,
-    load_index_from_storage
+    load_index_from_storage,
+    Document
 )
 from llama_index.embeddings.text_embeddings_inference import TextEmbeddingsInference
-from llama_index.core.node_parser.text import SentenceWindowNodeParser
-
-try:
-    from llama_index.core import Document
-except ImportError:
-    from llama_index.readers.schema.base import Document
-
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.schema import TextNode, QueryBundle
+from llama_index.core.postprocessor import SentenceTransformerRerank
 from huggingface_hub import InferenceClient
 from transformers import AutoTokenizer
 
-# Initialize FastAPI application
+# ========== Configuration ==========
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+RERANK_MODEL = "jinaai/jina-reranker-v2-base-multilingual"
+TGI_MODEL = os.getenv("TGI_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
+STORAGE_DIR = "./index_storage"
+
+# ========== Init ==========
 app = FastAPI()
-
-# ==========================
-# CONFIGURATION: TEXT EMBEDDINGS INFERENCE (TEI)
-# ==========================
-tei_model_name = os.getenv("TEI_MODEL", "BAAI/bge-m3")
-print(f"Using embedding model: {tei_model_name}")
-
-# Configure embedding settings
-Settings.llm = None  # No language model is set directly in settings
-Settings.embed_model = TextEmbeddingsInference(
-    model_name=tei_model_name,
-    base_url="http://tei:80",  # Endpoint for the embedding service
-    embed_batch_size=32  # Defines batch size for embedding requests
-)
-
-# ==========================
-# CONFIGURATION: TEXT GENERATION INFERENCE (TGI)
-# ==========================
-print("Configuring TGI client for text generation...")
-
-# Initialize the text generation client
 generator = InferenceClient("http://tgi:80")
+tokenizer = AutoTokenizer.from_pretrained(TGI_MODEL)
 
-tgi_model_name = os.getenv("TGI_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
-print(f"Using generative model (TGI): {tgi_model_name}")
+Settings.embed_model = TextEmbeddingsInference(
+    model_name=os.getenv("TEI_MODEL", EMBEDDING_MODEL),
+    base_url="http://tei:80",
+    embed_batch_size=32
+)
+Settings.llm = None
 
-print("Loading tokenizer...")
-# Load the tokenizer for processing input text
-tokenizer = AutoTokenizer.from_pretrained(tgi_model_name)
+reranker = SentenceTransformerRerank(model=RERANK_MODEL)
+reranker.top_n = 5
 
-# Global variable to store the vector index
 index = None
 
+# ========== Models ==========
 class UploadRequest(BaseModel):
-    """
-    Request model for document uploads.
-    Attributes:
-        texts (list[str]): A list of strings to be indexed into the vector database.
-    """
     texts: list[str]
+
+# ========== Helper Functions ==========
+
+def chunk_texts(texts: list[str]) -> list[str]:
+    splitter = SentenceSplitter(chunk_size=1024, chunk_overlap=128, separator=" ", paragraph_separator="\n\n")
+    return [chunk for doc in texts for chunk in splitter.split_text(doc)]
+
+def persist_index(nodes):
+    global index
+    if os.path.exists(STORAGE_DIR) and os.listdir(STORAGE_DIR):
+        storage_context = StorageContext.from_defaults(persist_dir=STORAGE_DIR)
+        index = load_index_from_storage(storage_context)
+        index.insert_nodes(nodes)
+    else:
+        index = VectorStoreIndex(nodes)
+    index.storage_context.persist(persist_dir=STORAGE_DIR)
+
+def rerank_nodes(query: str, nodes):
+    return reranker.postprocess_nodes(nodes=nodes, query_bundle=QueryBundle(query))
+
+def build_prompt(query: str, context: str):
+    system_message = """
+    Eres un asistente, tu objetivo es proporcionar respuestas exhaustivas y detalladas, utilizando toda la información disponible en el contexto. Debes asegurarte de abordar completamente cada pregunta, desglosando todos los aspectos relevantes y considerando todas las posibles opciones y variaciones mencionadas en el contexto.
+    Es esencial que no limites tus respuestas a generalizaciones breves; en lugar de eso, desglosa las posibles respuestas, soluciones, pasos o detalles importantes que el contexto proporcione. Si la pregunta se refiere a un proceso o procedimiento, asegúrate de explicar cada etapa y los posibles matices involucrados. Si hay diferentes alternativas o elementos a considerar, proporciona detalles sobre cada uno de ellos.
+    Si no cuentas con suficiente información para ofrecer una respuesta completa, o si la pregunta no se relaciona con el contexto, responde: 'No tengo suficiente información para responder a eso.'
+    Recuerda que tu propósito es ser lo más detallado y completo posible, sin omitir ninguna información relevante, con el fin de que el usuario reciba una respuesta clara, precisa y útil.
+    """
+    return tokenizer.apply_chat_template([
+                                        {"role": "system", "content": system_message},
+                                        {
+                                            "role": "user",
+                                            "content": (
+                                                f"Contexto relevante:\n{context}\n\n"
+                                                f"Pregunta: {query}\n\n"
+                                                "Recuerda contestar a la pregunta de manera exhaustiva, completa y clara, "
+                                                "incluyendo todos los detalles y ejemplos que encuentres en el contexto que sean relevantes."
+                                            )
+                                        }
+                                    ], add_generation_prompt=True, tokenize=False)
+
+
+# ========== Endpoints ==========
 
 @app.post("/upload")
 async def upload_documents(req: UploadRequest):
-    """
-    Endpoint to create a vector database from a list of input texts.
-    Steps:
-    1. Each string in `req.texts` is converted into a `Document`.
-    2. A `SentenceWindowNodeParser` is applied to segment text based on sentences.
-    3. A `VectorStoreIndex` is created and persisted to disk for future retrieval.
-
-    Returns:
-        JSON response indicating success and the number of nodes created.
-    """
     try:
-        # Convert texts into Document objects
-        documents = [Document(text=text) for text in req.texts]
+        if not req.texts:
+            raise HTTPException(status_code=400, detail="No texts provided.")
 
-        if not documents:
-            raise HTTPException(status_code=400, detail="No texts were received for indexing.")
+        chunked_texts = chunk_texts(req.texts)
+        nodes = [TextNode(text=text) for text in chunked_texts]
+        persist_index(nodes)
 
-        sentence_window = SentenceWindowNodeParser()
-        nodes = sentence_window.build_window_nodes_from_documents(documents)
-
-        # Create a vector index
-        global index
-        index = VectorStoreIndex(nodes)
-        
-        # Persist the index to disk
-        index.storage_context.persist(persist_dir="./index_storage")
-        
-        return {"message": "Vector index successfully created", "nodes_count": len(nodes)}
+        return {"message": "Index created", "nodes_count": len(nodes)}
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error while creating index: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error uploading documents: {e}")
 
 @app.post("/generate")
 async def generate_text(request: Request):
-    """
-    Endpoint to generate responses using Retrieval-Augmented Generation (RAG):
-    - If the vector index is not in memory, it is loaded from disk.
-    - Relevant nodes matching the query are retrieved.
-    - A prompt is constructed using a system message and retrieved context.
-    - The prompt is sent to the TGI service for text generation.
-
-    Returns:
-        JSON response containing the generated text.
-    """
     global index
     try:
         data = await request.json()
-        new_message = data.get("new_message", {})
-        if "content" not in new_message:
-            raise HTTPException(
-                status_code=400,
-                detail="The attribute 'content' is missing in 'new_message'."
-            )
-        
-        # Load index from storage if not already in memory
+        query = data.get("new_message", {}).get("content")
+        if not query:
+            raise HTTPException(status_code=400, detail="'content' missing in 'new_message'.")
+
         if index is None:
-            storage_context = StorageContext.from_defaults(persist_dir="./index_storage")
+            storage_context = StorageContext.from_defaults(persist_dir=STORAGE_DIR)
             index = load_index_from_storage(storage_context)
-        
-        # Retrieve relevant nodes using similarity search
-        query_engine = index.as_query_engine(streaming=False, similarity_top_k=10)
-        nodes_retrieved = query_engine.retrieve(new_message["content"])
-        
-        # Extract text from retrieved nodes
-        docs = "".join([f"<doc>\n{node.text}</doc>" for node in nodes_retrieved])
-        
-        # Construct system prompt for the assistant
-        system_prompt = (
-            "You are an assistant that responds strictly based on the "
-            "provided document information."
-        )
-        
-        # Construct input prompt for generation
-        prompt = tokenizer.apply_chat_template(
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "input", "content": docs},
-                new_message
-            ],
-            add_generation_prompt=True,
-            tokenize=False
-        )
-        
-        # Generate response using the TGI service
-        answer = generator.text_generation(
+
+        query_engine = index.as_query_engine(similarity_top_k=15)
+        nodes = query_engine.retrieve(query)
+        nodes = rerank_nodes(query, nodes)
+
+        context = "".join([f"<doc>\n{node.text}</doc>" for node in nodes])
+        prompt = build_prompt(query, context)
+
+        response = generator.text_generation(
             prompt,
-            max_new_tokens=128,  # Limit response length
-            top_p=0.8,  # Probability threshold for nucleus sampling
-            temperature=0.1,  # Control randomness of output
-            stop=[tokenizer.eos_token or "<|eot_id|>"],
-            do_sample=True,  # Enable sampling for diverse responses
+            max_new_tokens=2048,
+            top_p=0.9,
+            temperature=0.2,
             return_full_text=False
         )
-        return {"generated_text": answer, "contexts": [node.text for node in nodes_retrieved]}
+
+        return {"generated_text": response, "contexts": [node.text for node in nodes]}
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error during generation: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Generation error: {e}")
+
 
 @app.get("/")
 def read_root():
@@ -174,6 +140,7 @@ def read_root():
         JSON response indicating API health.
     """
     return {"message": "RAG API is running successfully"}
+
 
 if __name__ == "__main__":
     import uvicorn
