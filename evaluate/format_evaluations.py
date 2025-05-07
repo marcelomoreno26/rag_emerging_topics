@@ -21,7 +21,7 @@ for filename in os.listdir(folder_path):
         top_k = int(match.group("top_k"))
 
         # Determine model from filename prefix
-        model = "qwen" if filename.startswith("qwen_") else "lenia"
+        model = "qwen" if filename.startswith("qwen_") else "qwen3" if filename.startswith("qwen3_") else "lenia"
 
         # Handle optional breakpoint_percentile_threshold
         if chunking_technique == "semantic":

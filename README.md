@@ -103,9 +103,9 @@ These metrics are combined into an **overall average score** to compare configur
 | HyDE                 | sentence\_splitter  | True   | 10     | 0.79              | 0.96               | **0.76**     | 0.94            | **0.8625**     |
 | none                 | sentence\_splitter  | False  | 10     | 0.79              | **0.97**           | 0.75         | 0.94            | **0.8625**     |
 | none                 | semantic            | True   | 5      | 0.80           | 0.96               | 0.74         | 0.94        | 0.8550          |
-| HyDE                 | semantic            | True   | 5      | 0.81              | 0.96               | 0.72         | 0.94            | 0.8575         |
+| HyDE                 | semantic            | True   | 5      | **0.81**              | 0.96               | 0.72         | 0.94            | 0.8575         |
 | HyDE                 | sentence\_splitter  | True   | 5      | 0.79              | **0.97**           | 0.74         | 0.93            | 0.8575         |
-| none                 | semantic            | True   | 10     | 0.81              | 0.94               | 0.73         | **0.95**        | 0.8575         |
+| none                 | semantic            | True   | 10     | **0.81**              | 0.94               | 0.73         | **0.95**        | 0.8575         |
 | query\_rewriting     | sentence\_splitter  | True   | 5      | 0.79              | 0.96               | **0.76**     | 0.92            | 0.8575         |
 | HyDE                 | semantic            | True   | 10     | 0.80               | 0.94               | 0.75         | 0.93            | 0.8550          |
 | none                 | semantic            | False  | 5      | 0.80          | 0.96               | 0.74         | 0.92            | 0.8550          |
@@ -193,13 +193,73 @@ We also attempted **query rewriting**, refining the prompts that generate the re
 Lastly, we tested a smaller model, [**Qwen-2.5-0.5B**](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct), using the [**Q4\_K\_M GGUF quantized**](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF) version. Since the speed and efficiency of RAG systems depend heavily on model size, we wanted to understand how much performance would be affected by switching to a smaller, less capable model. Even under our best RAG setup from earlier experiments, **Qwen’s performance aligned with the weakest results among the 24 previous combinations using LeNIA**. We see the metric that decreased significantly when using Qwen was faithfulness, which suggests that while Qwen is faster, it sacrifices some consistency in how well the generated response aligns with and supports the retrieved context compared to LeNIA. However, Qwen took only **3/4 of the time** to generate responses for the 201 queries as compared to LeNIA. Thus, it comes down to how much quality we are willing to lose for the increased time performance. 
 
 
-## RAG API with Docker
 
-This project provides a Retrieval-Augmented Generation (RAG) API using FastAPI, LlamaIndex, and Hugging Face models. The system consists of three containers:
+## RAG Configuration Adjustments and Final Model Choice
 
-1. **Text Embeddings Inference (TEI)**: Responsible for computing text embeddings.
-2. **Text Generation Inference (TGI)**: Generates responses based on retrieved context.
-3. **RAG API**: Manages indexing and query processing.
+During the adaptation and testing of our Retrieval-Augmented Generation (RAG) setup, we encountered two important considerations we hadn't initially accounted for:
+
+#### 1. **Embedding Model Trade-offs**
+
+We began by using the [**BGE-M3**](https://huggingface.co/BAAI/bge-m3) embeddings model, which, while highly performant, is relatively large and caused very slow document ingestion when running on CPU. To address this, we switched to the [**intfloat/multilingual-e5-small**](https://huggingface.co/intfloat/multilingual-e5-small) model. It’s approximately 5x smaller and still performs well in multilingual benchmarks.
+
+However, the **e5-small** model has a **context window limit of 512 tokens**, whereas our original `SentenceSplitter` was chunking text into 1024-token segments. This meant that nearly half of each chunk would be truncated, potentially losing valuable information. To fix this, we:
+
+* Reduced the chunk size to **512 tokens**.
+* Introduced a **chunk overlap of 64 tokens** to maintain contextual continuity between segments.
+
+Because documents were now split into smaller parts, and our best evaluation setup previously used `top_k = 5` after reranking, we adjusted our retrieval configuration to:
+
+* Retrieve **20 documents** instead of 15 before reranking.
+* Rerank and select the top **10** documents instead of 5.
+
+This ensured we still provided a rich context to the model during inference without sacrificing important information.
+
+#### 2. **Final Model Selection**
+
+While [**LeNIA-1.5B**](https://huggingface.co/LenguajeNaturalAI/leniachat-qwen2-1.5B-v0) outperformed [**Qwen-2.5-0.5B**](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct), especially in metrics like **faithfulness**, it required more resources. Considering our priority was maintaining performance efficiency, we initially accepted the trade-off in faithfulness.
+
+However, during development, [**Qwen3-0.6B**](https://huggingface.co/Qwen/Qwen3-0.6B) was released. Community feedback and benchmark reports indicated that it featured significant improvements in **multilingual understanding** over Qwen2.5. This prompted us to test it under our updated configuration:
+
+* Using the **e5-small** embedding model
+* Sentence splitting at **512 tokens with 64-token overlap**
+* **Top 10 reranked results** from 20 retrieved
+
+Since [**vLLM v0.8.5**](https://github.com/vllm-project/vllm) did not support **GGUF** quantization for Qwen3 at the time, we evaluated the model without quantization. That said, **Q4\_K\_M** GGUF quantization has been shown to cause minimal performance degradation, so the results are still a good indicator of real-world performance.
+
+The table below summarizes our evaluation:
+
+| Model   | Quantization | Embedding Model | Retrieval Technique | Chunking Technique | Rerank | Top K | Answer Relevancy | Context Precision | Faithfulness | Context Recall | Avg. Score |
+| ------- | ------------ | --------------- | ------------------- | ------------------ | ------ | ----- | ---------------- | ----------------- | ------------ | -------------- | ---------- |
+| LeNIA   | GGUF         | BGE-M3          | None                | SentenceSplitter   | ✓      | 5     | 0.80             | **0.97**          | 0.75         | 0.93           | 0.8625 |
+| Qwen2.5 | GGUF         | BGE-M3          | None                | SentenceSplitter   | ✓      | 5     | 0.80             | 0.96              | 0.61         | **0.94**           | 0.8275     |
+| Qwen3   | None         | e5-small        | None                | SentenceSplitter   | ✓      | 10    | **0.84**             | 0.9              | **0.81**     | **0.94**           | **0.8725**   |
+
+Thought for a second
+
+
+**Key Observations:** **Qwen3-0.6B** outperforms **Qwen2.5-0.5B** across all metrics and even surpasses **LeNIA-1.5B** in **answer relevancy** and **faithfulness**, confirming community and benchmark reports of its improved reasoning and multilingual capabilities. Its **faithfulness** score is the highest of all models, demonstrating that the enhancements in Qwen3 translate directly into more reliable, on-point responses. At the same time, **context precision** dipped slightly—from **0.97** with LeNIA and **0.96** with Qwen2.5 to **0.90** with Qwen3—an effect we attribute to the switch to the smaller **e5-small** embedding model, which, while much faster, trades off some granularity in contextual representation. Overall, **Qwen3-0.6B** delivers the best balance of **efficiency** and **performance** for our RAG pipeline. Our **final RAG system** uses the configuration shown for **Qwen3-0.6B**, with quantization enabled in our containerized deployment via **llama.cpp** (which supports GGUF).
+
+
+
+
+
+## 🐋 RAG API with Docker
+
+The `containers` folder provides a Retrieval-Augmented Generation (RAG) API using FastAPI, LlamaIndex, and Hugging Face models. The system consists of three containers:
+
+
+
+### System Components
+
+1. **Text Embeddings Inference (TEI)**
+   Responsible for computing high-quality text embeddings used in retrieval. This service uses the `text-embeddings-inference` server from Hugging Face.
+
+2. **LLM Inference via llama.cpp**
+   Instead of using TGI (Text Generation Inference), this setup uses [`llama.cpp`](https://github.com/ggml-org/llama.cpp) as the LLM backend. It is chosen specifically for its support of the efficient GGUF model format, which TGI does not support. This enables running smaller, quantized models like the [Qwen3-0.6B-GGUF](https://huggingface.co/unsloth/Qwen3-0.6B-GGUF) which we will be using for resource-constrained environments.
+
+3. **RAG API**
+   Manages document indexing and query processing. It connects to both the embedding and generation services to perform Retrieval-Augmented Generation (RAG).
+
 
 ### Prerequisites
 
@@ -210,20 +270,23 @@ This project provides a Retrieval-Augmented Generation (RAG) API using FastAPI, 
 
 #### 1. Build the Containers
 
+Move from root directory to `containers` folder and then build the containers
+
 ```sh
+cd containers/
 docker compose build
 ```
 
 #### 2. Start the Containers
 
 ```sh
-docker compose up -d
+docker compose up
 ```
 
 This will start the following services:
 
 - `tei` on port `8080`
-- `tgi` on port `8081`
+- `llama.cpp` on port `8081`
 - `rag` (the API) on port `8000`
 
 #### 3. Stop the Containers
@@ -252,53 +315,93 @@ Once documents are indexed, ask questions based on the stored knowledge.
 curl -X POST "http://localhost:8000/generate" -H "Content-Type: application/json" -d '{"new_message": {"role": "user", "content": "What is the capital of France?"}}'
 ```
 
+
 ### Testing the API with Python
 
-Save the following script as `test_rag.py` and run it after starting the containers:
+You can test the Retrieval-Augmented Generation (RAG) system using two provided Python scripts:
 
-```python
-import requests
+---
 
-def main():
-    base_url = "http://localhost:8000"  # Adjust if needed
+#### 1. **Basic Test with `test_rag.py`**
 
-    # Upload sample texts
-    texts = [
-        "The capital of France is Paris. France is in Europe.",
-        "Don Quixote was written by Miguel de Cervantes in the early 17th century.",
-        "Python is a popular programming language created by Guido van Rossum."
-    ]
-    upload_payload = {"texts": texts}
-    print("Uploading documents...\n")
-    resp_upload = requests.post(f"{base_url}/upload", json=upload_payload)
-    print("Status code /upload:", resp_upload.status_code)
-    print("Response /upload:", resp_upload.json())
+This script serves as a baseline to test RAG performance. A timer has been added to measure and display the total execution time.
 
-    # Example questions
-    questions = [
-        "What is the capital of France?",
-        "Who created the Python language?",
-        "Who wrote Don Quixote?"
-    ]
+**To run the test:**
 
-    for q in questions:
-        print(f"\nQuestion: {q}")
-        generate_payload = {"new_message": {"role": "user", "content": q}}
-        resp_generate = requests.post(f"{base_url}/generate", json=generate_payload)
-        print("Status code /generate:", resp_generate.status_code)
-        if resp_generate.ok:
-            data = resp_generate.json()
-            print("Generated response:", data.get("generated_text"))
-        else:
-            print("Error:", resp_generate.text)
-
-if __name__ == "__main__":
-    main()
+```sh
+python3 test_rag.py
 ```
+
+---
+
+#### 2. **Advanced Test with `test_ragquas.py`**
+
+This script evaluates the RAG system using the [IIC/RagQuAS](https://huggingface.co/datasets/IIC/RagQuAS) dataset. It works as follows:
+
+* Uploads all documents from the dataset to the vector database.
+* Selects a random question from the dataset.
+* Generates an answer and prints both the answer and the retrieved contexts.
+
+##### **Requirements:**
+
+Before running this script, make sure you have:
+
+1. Installed the Hugging Face `datasets` library:
+
+   ```sh
+   pip install datasets
+   ```
+
+2. Gained access to the **gated** RagQuAS dataset on Hugging Face.
+
+3. Logged in via the CLI with your Hugging Face token:
+
+   ```sh
+   huggingface-cli login --token <HF_TOKEN>
+   ```
+
+##### **Run the test:**
+
+```sh
+python3 test_ragquas.py
+```
+
+
+
+### Important Considerations When Using the Vector Database
+
+The Vector Database stores data persistently. If you run test scripts and later want to run your own experiments or upload personal documents, it's important to **clear the database first** to avoid mixing test data with your own.
+
+Follow these steps to reset the Vector Database:
+
+1. **Stop the Docker containers:**
+
+   ```sh
+   docker compose down
+   ```
+
+2. **Delete the existing vector index storage:**
+
+   ```sh
+   sudo rm -rf index_storage/
+   ```
+
+   > ⚠️ This permanently deletes all stored vector data. Make sure you don’t need anything before running this command.
+
+3. **Restart the containers:**
+
+   ```sh
+   docker compose up
+   ```
+
+4. **Now you're ready to upload your own documents and run your tests.**
+
+
+
 
 ### Summary
 
 - **Build the images**: `docker compose build`
-- **Run the containers**: `docker compose up -d`
+- **Run the containers**: `docker compose up`
 - **Stop the containers**: `docker compose down`
-- **Test the API**: Use `curl` commands or `test_rag.py`
+- **Test the API**: Use `curl` commands or `test_rag.py` or `test_ragquas.py`
