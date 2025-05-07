@@ -9,10 +9,10 @@ from argparse import ArgumentParser
 
 
 if __name__=="__main__":
-    top_k = [5, 10]
-    retrieval_technique = ["none", "HyDE", "query_rewriting"]
+    top_k = [10]
+    retrieval_technique = ["none"]
     chunking_technique = "sentence_splitter"
-    rerank = [True, False]
+    rerank = [True]
 
     combinations = list(itertools.product(top_k, retrieval_technique, rerank))
     grid = [{"top_k": k, "retrieval_technique": r, "rerank": re} for k, r, re in combinations]
@@ -21,7 +21,7 @@ if __name__=="__main__":
     evaluation_dataset = load_dataset("IIC/RagQuAS", split="test")
     queries = evaluation_dataset["question"]
     references = evaluation_dataset["answer"]
-    rag = RAG(chunking_technique=chunking_technique, generation_port=8000, retrieval_techniques_port=8000)
+    rag = RAG(chunking_technique=chunking_technique, generation_port=8000, retrieval_techniques_port=8000, embeddings_model="intfloat/multilingual-e5-small")
 
     folder_path = "rag_predictions"
     os.makedirs(folder_path, exist_ok=True) 
@@ -32,7 +32,7 @@ if __name__=="__main__":
     for config in tqdm(grid):
         rag.set_config(**config)
 
-        filename = f"{config['retrieval_technique']}_{chunking_technique}_rerank{config['rerank']}_top_k{config['top_k']}.json"
+        filename = f"qwen3_{config['retrieval_technique']}_{chunking_technique}_rerank{config['rerank']}_top_k{config['top_k']}.json"
         filepath = os.path.join(folder_path, filename)
 
         if os.path.exists(filepath):

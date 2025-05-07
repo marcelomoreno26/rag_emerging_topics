@@ -79,8 +79,8 @@ class RAG:
         
         elif self.chunking_technique == "sentence_splitter":
             splitter = SentenceSplitter(
-                chunk_size=1024,
-                chunk_overlap=128,  
+                chunk_size=512, #1024
+                chunk_overlap=64,  #128 
                 separator=" ",
                 paragraph_separator="\n\n"
             )
@@ -262,7 +262,7 @@ class RAG:
         self.retrieval_technique = retrieval_technique
         self.rerank = rerank
         if self.rerank:
-            self.top_k = 15
+            self.top_k = 20
             self.reranker.top_n = top_k
         else:
             self.top_k = top_k
@@ -363,7 +363,7 @@ class RAG:
                 },
                 {
                     "role":"user",
-                    "content": query + "\nRecuerda contestar a la pregunta de manera exhaustiva, completa y clara, incluyendo todos los detalles y ejemplos que encuentres en el contexto que sean relevantes para poder responder a la consulta presentada en su totalidad."
+                    "content": query + "\nRecuerda contestar a la pregunta de manera exhaustiva, completa y clara, incluyendo todos los detalles y ejemplos que encuentres en el contexto que sean relevantes para poder responder a la consulta presentada en su totalidad. /no_think"
                 }
             ])
         

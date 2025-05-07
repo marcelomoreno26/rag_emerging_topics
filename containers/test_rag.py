@@ -1,58 +1,43 @@
-import os
-import random
 import requests
-from datasets import load_dataset
+import time
 
-BASE_URL = "http://localhost:8000"
-
-def preprocess_column(texts: list[str]) -> list[str]:
-    """
-    Remove duplicates, empty entries, and strip whitespace.
-    """
-    return list(set(text.strip() for text in texts if text and text.strip()))
-
-def upload_texts_to_api(texts: list[str]):
-    """
-    Upload preprocessed texts to the /upload endpoint.
-    The API will handle chunking.
-    """
-    payload = {"texts": texts}
-    response = requests.post(f"{BASE_URL}/upload", json=payload)
-    if response.ok:
-        print("✅ Upload successful:", response.json())
-    else:
-        raise Exception(f"❌ Upload failed: {response.status_code}, {response.text}")
-
-def generate_response(question: str):
-    """
-    Send a single question to the /generate endpoint and print the result.
-    """
-    payload = {"new_message": {"role": "user", "content": question}}
-    response = requests.post(f"{BASE_URL}/generate", json=payload)
-    if response.ok:
-        result = response.json()
-        print("\n🧠 Generated Answer:\n", result.get("generated_text"))
-        print("\nRetrieved Contexts:\n", result.get("contexts"))
-    else:
-        raise Exception(f"❌ Generation failed: {response.status_code}, {response.text}")
 
 def main():
-    dataset = load_dataset("IIC/RagQuAS", split="test")
+    start_time = time.time()  # Start timer
+    base_url = "http://localhost:8000"  # Adjust if needed
 
-    # Step 1: Loop through context_1 to context_5 and upload each column
-    for i in range(1, 6):
-        column = f"context_{i}"
-        if column in dataset.column_names:
-            texts = preprocess_column(dataset[column])
-            print(f"\n📤 Uploading {len(texts)} texts from column '{column}'...")
-            upload_texts_to_api(texts)
+    # Upload sample texts
+    texts = [
+        "The capital of France is Paris. France is in Europe.",
+        "Don Quixote was written by Miguel de Cervantes in the early 17th century.",
+        "Python is a popular programming language created by Guido van Rossum."
+    ]
+    upload_payload = {"texts": texts}
+    print("Uploading documents...\n")
+    resp_upload = requests.post(f"{base_url}/upload", json=upload_payload)
+    print("Status code /upload:", resp_upload.status_code)
+    print("Response /upload:", resp_upload.json())
+
+    # Example questions
+    questions = [
+        "What is the capital of France?",
+        "Who created the Python language?",
+        "Who wrote Don Quixote?"
+    ]
+
+    for q in questions:
+        print(f"\nQuestion: {q}")
+        generate_payload = {"new_message": {"role": "user", "content": q}}
+        resp_generate = requests.post(f"{base_url}/generate", json=generate_payload)
+        print("Status code /generate:", resp_generate.status_code)
+        if resp_generate.ok:
+            data = resp_generate.json()
+            print("Generated response:", data.get("generated_text"))
         else:
-            print(f"⚠️ Column '{column}' not found in dataset. Skipping.")
+            print("Error:", resp_generate.text)
 
-    # Step 2: Pick one random question and generate response
-    question = random.choice(dataset["question"])
-    print(f"\n🎯 Asking question: {question}")
-    generate_response(question)
+    end_time = time.time()  # End timer
+    print(f"\nTotal runtime: {end_time - start_time:.2f} seconds")
 
 if __name__ == "__main__":
     main()

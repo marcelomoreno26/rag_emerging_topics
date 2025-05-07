@@ -3,20 +3,30 @@ version: "3.8"
 services:
   tei:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.4
-    # Model can be overridden using the TEI_MODEL environment variable
-    command: --model-id ${TEI_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    command: --model-id ${TEI_MODEL:-intfloat/multilingual-e5-small}
     ports:
       - "8080:80"
     volumes:
       - ./tei_data:/data
+    # mem_limit: 4g
 
-  tgi:
-    image: ghcr.io/huggingface/text-generation-inference:3.1.0
-    command: --model-id ${TGI_MODEL:-Qwen/Qwen2.5-0.5B-Instruct} --num-shard 1 --disable-custom-kernels 
+  llamacpp:
+    image: ghcr.io/ggml-org/llama.cpp:server
     ports:
-      - "8081:80"
+      - "8081:8080"
     volumes:
-      - ./tgi_data:/data
+      - ./Qwen3-0.6B-Q4_K_M.gguf:/models/model.gguf
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--model"
+      - "/models/model.gguf"
+      - "-c"
+      - "6024"
+      - "--n_gpu_layers"
+      - "0"
 
   rag:
     build: .
@@ -24,7 +34,7 @@ services:
       - "8000:8000"
     depends_on:
       - tei
-      - tgi
+      - llamacpp
     volumes:
       - ./index_storage:/app/index_storage
       - ./data:/app/data

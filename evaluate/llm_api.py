@@ -165,7 +165,8 @@ if __name__ == "__main__":
         model = hf_hub_download(args.model_name, filename=args.filename)
         model = LLM(model, max_model_len=args.max_model_len, gpu_memory_utilization=args.gpu_memory_utilization)
     else:
-        model = LLM(args.model_name, max_model_len=args.max_model_len, gpu_memory_utilization=args.gpu_memory_utilization)
+        model = LLM(args.model_name, max_model_len=args.max_model_len, gpu_memory_utilization=args.gpu_memory_utilization, dtype="half")
     uvicorn.run(app, host="0.0.0.0", port=args.port)
     #uv run llm_api.py --model_name=QuantFactory/leniachat-qwen2-1.5B-v0-GGUF --tokenizer=LenguajeNaturalAI/leniachat-qwen2-1.5B-v0 --filename=leniachat-qwen2-1.5B-v0.Q4_K_M.gguf --gpu_memory_utilization=0.85 --max_model_len=20000
     #uv run llm_api.py --model_name=Qwen/Qwen2.5-1.5B-Instruct-GGUF --tokenizer=Qwen/Qwen2.5-1.5B-Instruct --filename=qwen2.5-1.5b-instruct-q4_k_m.gguf --gpu_memory_utilization=0.85 --max_model_len=20000
+    #uv run llm_api.py --model_name=Qwen/Qwen3-0.6B --tokenizer=Qwen/Qwen3-0.6B --gpu_memory_utilization=0.85 --max_model_len=20000

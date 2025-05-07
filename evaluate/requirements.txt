@@ -9,4 +9,4 @@ numpy>=1.26.4
 ragas>=0.2.14
 setuptools>=76.0.0
 uvicorn>=0.34.0
-vllm>=0.7.3
+vllm>=0.8.5
